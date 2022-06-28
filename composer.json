@@ -1,5 +1,5 @@
 {
-    "name": "frame/absmvc",
+    "name": "self-frame/absmvc",
     "description": "mvc abstract class",
     "type": "library",
     "license": "MIT",
