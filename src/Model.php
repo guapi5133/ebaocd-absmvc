@@ -3,7 +3,6 @@ namespace eBaocd\AbsMvc;
 
 use Apps\Rule\PurposeRule;
 use eBaocd\Common\xFun;
-use eBaocd\Common\xRedis;
 use mysql_xdevapi\Collection;
 
 class Model
@@ -14,6 +13,8 @@ class Model
     private $forcibly = TRUE; //强条件要求，where不能为空
     private $whereRaw = [];
     private $filedRaw = '*';
+    private $incRaw = []; //递增
+    private $secRaw = []; //递减
     private $orderRaw = '';
     private $limitRaw = [];
     private $columnRaw = ''; //列名
@@ -23,9 +24,10 @@ class Model
 
     public function __construct()
     {
-        $clsname       = get_called_class();
-        $clsname       = str_replace("Model", "Rule", $clsname);
-        $this->clsname = $clsname;
+        $clsname        = get_called_class();
+        $clsname        = str_replace("Model", "Rule", $clsname);
+        $this->clsname  = $clsname;
+        $this->_isdebug = DEBUG && SQL_DEBUG ? TRUE : FALSE; //输出sql语句需要同时开启debug模式和sql_debug
     }
 
     public function __call($name, $arguments)
@@ -170,7 +172,7 @@ class Model
     public function GetList($where = 'id > 0', $orderby = '', $page = 0, $pagesize = 0, $field = "*", $tbname = '', $tbpre = TRUE)
     {
         $cr = $this->GetClassObj();
-        $cr->SetDb($this->db_select()); //要连接的数据库
+        $cr->SetDb($this->db_select(FALSE)); //要连接的数据库
 
         if ($tbname != '') //完整表名
         {
@@ -201,7 +203,7 @@ class Model
     public function GetOneExt($field, $where, $tbname = '')
     {
         $cr = $this->GetClassObj();
-        $cr->SetDb($this->db_select()); //要连接的数据库
+        $cr->SetDb($this->db_select(FALSE)); //要连接的数据库
 
         if ($tbname != '')
         {
@@ -235,7 +237,7 @@ class Model
     public function IsExists($where, $tbname = '', $tbcontainspre = FALSE)
     {
         $cr = $this->GetClassObj();
-        $cr->SetDb($this->db_select()); //要连接的数据库
+        $cr->SetDb($this->db_select(FALSE)); //要连接的数据库
 
         $rtn = 0;
         if ($tbname != '')
@@ -326,7 +328,7 @@ class Model
      *
      * @return Ambiguous
      */
-    public function UpdateOne(array $data, $where, $tbname = '')
+    public function UpdateOne(array $data, $where, $tbname = '', $inc = [], $sec = [])
     {
         $cr = $this->GetClassObj();
         $cr->SetDb($this->db_select()); //要连接的数据库
@@ -335,12 +337,12 @@ class Model
         {
             $srctb = $cr->GetTableName(FALSE);
             $cr->SetTable($tbname);
-            $num = $cr->Update($data, $where);
+            $num = $cr->Update($data, $where, $inc, $sec);
             $cr->SetTable($srctb);
         }
         else
         {
-            $num = $cr->Update($data, $where);
+            $num = $cr->Update($data, $where, $inc, $sec);
         }
 
         //写入操作数据库日志
@@ -510,20 +512,19 @@ class Model
     }
 
     //获取要连接的数据库
-    public function db_select()
+    public function db_select($write = TRUE)
     {
-        $db = 'db';
         if (!empty($this->third_db)) //如果指定了第三方数据库
         {
             $db = $this->third_db;
         }
-        else //读取自己的数据库
+        elseif (xFun::getGlobalConfig('transaction') || $write) //开启了事务或写操作走写库
         {
-            //如果未开启事务，读写分离
-            if (!xFun::getGlobalConfig('transaction'))
-            {
-                $db = 'readdb';
-            }
+            $db = 'db';
+        }
+        else //如果未开启事务，走读库
+        {
+            $db = 'readdb';
         }
 
         return $db;
@@ -553,6 +554,37 @@ class Model
     public function order($order = '')
     {
         $this->orderRaw = $order;
+
+        return $this;
+    }
+
+    //自增  看一下function里面的说明
+    public function inc(array $data)
+    {
+        /**
+         * 调用自增自减同时再调用update才会生效，因为自增或自减只可能是update操作
+         * 也就是说，不能单独进行自增自减，要配合其它字段一起修改，举个例子
+         * update xxxx set money = money + 100 where xxxx;  这种要报错
+         * update xxxx set money = money + 100,xx=yy where xxxx; 这是正确的
+         *
+         * 两者的区别就在于除了自增减外还附加了其它字段的修改，用框架的流程来解释的话就是这样：
+         * 调用了自增自减后，最终框架会去调用update这个function，但是这个function要求必须传data参数
+         * 也就是自增减的链式调用方法是
+         *
+         * xDb::sms()->inc(['code' => 1])->sec(['mobile' => 1])->update(['update_time'=>time()],['id'=>1]);
+         *
+         * 如果少了后面调用update或者update的第一个参数data为空，框架都会报错，这点要注意
+         */
+
+        $this->incRaw = $data;
+
+        return $this;
+    }
+
+    //自减  看一下自增function里面的说明
+    public function sec(array $data)
+    {
+        $this->secRaw = $data;
 
         return $this;
     }
@@ -694,7 +726,7 @@ class Model
             $this->where($where);
         }
 
-        return $this->UpdateOne($data, $this->whereRaw, $this->table);
+        return $this->UpdateOne($data, $this->whereRaw, $this->table, $this->incRaw, $this->secRaw);
     }
 
     public function updateById($data, $id)

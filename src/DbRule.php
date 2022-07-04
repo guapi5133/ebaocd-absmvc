@@ -309,13 +309,13 @@ class DbRule
 	 * @param mixed $where array(1,2)或不含WHERE的SQL
 	 * @return 更改成功的数量
 	 */
-	public function Update(array $data,$where=''){
+	public function Update(array $data,$where='',$inc = [], $sec = []){
 		if(!$data){return false;}
 
 		//$backtrace=debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
 		//print_r($backtrace);
 
-		$r=$this->GetDb()->Update($this->GetTableName(),$data,$where);
+		$r=$this->GetDb()->Update($this->GetTableName(),$data,$where,$inc, $sec);
 
 		//$this->unsetCache($this->GetTableName());
 
